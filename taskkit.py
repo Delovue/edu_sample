@@ -81,10 +81,20 @@ class Facts:
     def __post_init__(self) -> None:
         graph = json.loads((self.src / "graph" / "surface_graph.json")
                            .read_text(encoding="utf-8"))
+        self.graph_edges = graph["edges"]  # Store for general graph queries
         self.disc_of: dict[str, str] = {}
+        # major nodes carry the *code* ("Humanities"); the discipline node id is
+        # the Chinese label ("文科"). A question built from disc_of directly
+        # leaked "Humanities" into user-facing text, so keep a code->label map
+        # and always render through disc_label_of().
+        self.disc_code_to_label: dict[str, str] = {}
         for n in graph["nodes"]:
             if n.get("type") == "major":
                 self.disc_of[n["id"]] = n.get("discipline")
+            elif n.get("type") == "discipline":
+                code = n.get("code")
+                if code:
+                    self.disc_code_to_label[code] = n["id"]
         self.includes: dict[str, list[str]] = collections.defaultdict(list)
         self.college_of: dict[str, str] = {}
         for e in graph["edges"]:
@@ -139,6 +149,13 @@ class Facts:
     def one(self, sql: str, params: tuple = ()) -> tuple:
         return self.q(sql, params)[0]
 
+    def disc_label_of(self, major: str) -> str | None:
+        """Chinese discipline label for a major — never the raw code."""
+        code = self.disc_of.get(major)
+        if not code:
+            return None
+        return self.disc_code_to_label.get(code, code)
+
     def majors_of_discipline(self, label: str) -> list[str]:
         return sorted(self.includes[label])
 
@@ -149,7 +166,26 @@ class Facts:
     def majors_of_college(self, college: str) -> list[str]:
         return sorted(m for m, c in self.college_of.items() if c == college)
 
+    def graph_search_outbound(self, node_id: str, relation: str) -> list[str]:
+        """Find all nodes reachable from node_id via reverse relation edges.
+
+        For belongs_to_theme: find competitions pointing TO the theme node.
+        Returns the 'from' nodes when edge['to'] == node_id and edge['rel'] == relation.
+        """
+        return [e['from'] for e in self.graph_edges
+                if e['to'] == node_id and e['rel'] == relation]
+
     def common_required(self, majors: list[str]) -> tuple[int, float | None]:
+        """Courses every one of `majors` requires, keyed on course_code.
+
+        Keying matters and must be stated in any question using this. The 医科
+        curricula reuse one course *name* under several codes — 传染病学 has 4
+        distinct codes (CLS2022/CLF2021/CLS2021/CLF0511), 临床实践考试 has 2 —
+        so a name-keyed intersection is strictly larger than a code-keyed one.
+        Measured on 临床学院's 10 majors: 2 courses by code, 4 by name. A
+        validation run answered 4 and was scored wrong against a code-keyed gold
+        of 2; the agent was right and the question was underspecified.
+        """
         ph = ",".join("?" * len(majors))
         return self.one(
             f"""select count(*), round(sum(credits), 2) from (
@@ -157,6 +193,28 @@ class Facts:
                   where major in ({ph}) and course_type='必修'
                   group by course_code having count(distinct major)=?)""",
             (*majors, len(majors)))
+
+    def class_hours(self, major: str) -> tuple[float, int, int]:
+        """(summed classroom hours, n courses counted, n week-based excluded).
+
+        `total_hours` mixes three notations: 9462 plain numbers, 925 week-based
+        ("12w" for 实践性教学环节), and a handful like "40（16）". SQLite's
+        sum() coerces "12w" to 12, silently adding weeks to hours — a gold built
+        that way is simply wrong, and a validation run correctly refused to
+        report one number, splitting hours from weeks instead. So weeks are
+        excluded here and reported separately rather than summed in.
+        """
+        rows = self.q("select total_hours from course_catalog where major=?", (major,))
+        total = 0.0
+        counted = excluded = 0
+        for (h,) in rows:
+            s = str(h or "").strip()
+            if re.fullmatch(r"\d+(\.\d+)?", s):
+                total += float(s)
+                counted += 1
+            else:
+                excluded += 1
+        return round(total, 2), counted, excluded
 
     def required_total(self, major: str) -> tuple[int, float]:
         return self.one(

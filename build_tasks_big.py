@@ -135,6 +135,9 @@ def t_discipline_major_membership(f: Facts) -> list[Task]:
         def make(label=label, ms=ms, cols=cols) -> Task:
             seed = ms[len(ms) // 2]
             others = [m for m in ms if m != seed]
+            doc, anchor = ("major_transfer_and_school_transfer.md",
+                           "二年级学生，可在学科大类内部申请转换专业")
+            f.kb_anchor(doc, anchor)
             return Task(
                 question=(
                     f"一名二年级学生现在读{seed}专业。按学籍管理规定他今年只能在哪个范围内"
@@ -158,7 +161,8 @@ def t_discipline_major_membership(f: Facts) -> list[Task]:
                 },
                 difficulty="medium",
                 template="discipline_major_membership",
-                extras={"discipline": label, "seed_major": seed},
+                extras={"discipline": label, "seed_major": seed,
+                        "kb_doc": doc, "kb_anchor": anchor},
             )
         out.append(guard("discipline_major_membership", make))
     return [t for t in out if t]
@@ -265,32 +269,40 @@ def t_college_intersection(f: Facts) -> list[Task]:
             if n == 0:
                 raise Unanswerable(f"{college} 全体共同必修课为 0，不可作为唯一答案")
             plan = f.plan_for(college)
-            extra_q = extra_a = ""
-            deriv = [f"db: course_catalog 取该学院 {len(ms)} 个专业的必修课交集 = {n} 门 / {cr} 学分"]
-            nec_kb = ""
-            if plan:
-                amt = clean_ws(plan["assessment_method"])[:100]
-                extra_q = f"该学院今年转专业的考核方式是什么？"
-                extra_a = f"；考核方式：{amt}"
-                deriv.append(f"db: major_transfer_plan 查 {college} 的 assessment_method")
-                nec_kb = "考核方案由谁制定、流程如何走属政策，只在 KB"
+            if not plan:
+                raise Unanswerable(f"{college} 无转专业计划行，缺少 KB 所需的政策挂钩点")
+            amt = clean_ws(plan["assessment_method"])[:100]
+            doc, anchor = ("major_transfer_procedure.md",
+                           "自行制定并公布在院（系）网站上")
+            f.kb_anchor(doc, anchor)
             return Task(
                 question=(
                     f"{college}开设的专业里，所有专业都共同要求的必修课有多少门、合计多少学分？"
-                    f"该学院共开设多少个专业？{extra_q}"),
-                answer=(f"{college}共 {len(ms)} 个专业，全体共同必修课 {n} 门，合计 {cr} 学分"
-                        f"{extra_a}"),
+                    f"（同名课程若课程代码不同按不同课程计）该学院共开设多少个专业？"
+                    f"按转专业办理规程，该学院的转专业考核方案由谁制定和公布，"
+                    f"以及该学院今年的考核方式是什么？"),
+                answer=(f"{college}共 {len(ms)} 个专业，全体共同必修课 {n} 门，合计 {cr} 学分；"
+                        f"考核方案由转入院（系）根据专业人才培养目标与定位自行制定并公布在院（系）网站上；"
+                        f"该学院考核方式：{amt}"),
                 surfaces=["db", "kb"],
-                derivation=deriv + ["kb: major_transfer_procedure.md 提供转专业考核的制定主体与总体流程"],
+                derivation=[
+                    f"db: course_catalog 取该学院 {len(ms)} 个专业按 course_code 的必修交集"
+                    f" = {n} 门 / {cr} 学分",
+                    f"db: major_transfer_plan 查 {college} 的 assessment_method",
+                    "kb: major_transfer_procedure.md——考核方案由转入院（系）自行制定并在院（系）网站公布",
+                ],
                 necessity={
-                    "db": "课程交集与转专业考核方式都落在表上",
-                    **({"kb": nec_kb} if nec_kb else
-                       {"kb": "本任务不依赖具体条款，仅需确认学院层面的政策框架出处"}),
+                    "db": "课程交集与该学院的具体考核方式都只在表上",
+                    "kb": "“考核方案由转入院（系）自行制定并公布”这一制度归属只在办理规程，"
+                          "转专业名额表中没有对应字段",
                 },
                 difficulty="medium",
                 template="college_intersection",
                 extras={"college": college, "n_majors": len(ms),
-                        "note": "学院→专业可由名称与领域常识反推（实测关键词召回 2/4），故不标 graph"},
+                        "kb_doc": doc, "kb_anchor": anchor,
+                        "intersection_key": "course_code",
+                        "note": "学院→专业可由名称与领域常识反推（实测关键词召回 2/4），故不标 graph；"
+                                "但 agent 仍可能用图取专业清单，这不影响 db/kb 的必要性"},
             )
         out.append(guard("college_intersection", make))
     return [t for t in out if t]
@@ -371,7 +383,7 @@ def t_policy_threshold(f: Facts) -> list[Task]:
                     },
                     difficulty="easy",
                     template="policy_threshold",
-                    extras={"doc": doc, "anchor": anchor, "major": major},
+                    extras={"kb_doc": doc, "kb_anchor": anchor, "major": major},
                 )
             out.append(guard("policy_threshold", make))
     return [t for t in out if t]
@@ -390,6 +402,9 @@ def t_transfer_plan(f: Facts) -> list[Task]:
             elig = clean_ws(plan["eligibility_requirement"])
             if not quota or not elig:
                 raise Unanswerable(f"{college} 名额或报名条件为空")
+            doc, anchor = ("major_transfer_procedure.md",
+                           "每个学生只能申请一个转入专业（或专业类）")
+            f.kb_anchor(doc, anchor)
             return Task(
                 question=(f"{college}今年的转专业接收计划是多少人，报名需要满足什么条件？"
                           f"按转专业办理规程，每个学生最多能申请几个转入专业？"),
@@ -405,7 +420,7 @@ def t_transfer_plan(f: Facts) -> list[Task]:
                 },
                 difficulty="easy",
                 template="transfer_plan",
-                extras={"college": college},
+                extras={"college": college, "kb_doc": doc, "kb_anchor": anchor},
             )
         out.append(guard("transfer_plan", make))
     return [t for t in out if t]
@@ -433,7 +448,9 @@ def t_transfer_eligibility_rules(f: Facts) -> list[Task]:
                 necessity={"kb": "资格限定是纯政策条款，转专业名额表中没有任何相应字段"},
                 difficulty="easy",
                 template="transfer_eligibility_rules",
-                extras={"rule_subject": who},
+                extras={"rule_subject": who,
+                        "kb_doc": "major_transfer_procedure.md",
+                        "kb_anchor": "不得申请"},
             )
         out.append(guard("transfer_eligibility_rules", make))
     return [t for t in out if t]
@@ -452,19 +469,24 @@ def t_major_aggregate(f: Facts) -> list[Task]:
             ne, ecr = f.elective_total(major)
             if n == 0:
                 raise Unanswerable(f"{major} 无必修课记录")
-            hours = f.one("select coalesce(sum(total_hours),0) from course_catalog where major=?",
-                          (major,))[0]
+            hours, counted, excluded = f.class_hours(major)
             return Task(
-                question=(f"{major}专业的培养方案里，必修课与选修课各多少门、各多少学分？"
-                          f"全部课程的学时合计是多少？"),
+                question=(
+                    f"{major}专业的培养方案里，必修课与选修课各多少门、各多少学分？"
+                    f"以学时数记载的课程（不含以周计的实践性教学环节）学时合计是多少？"),
                 answer=(f"必修 {n} 门 / {cr} 学分；选修 {ne} 门 / {ecr or 0} 学分；"
-                        f"学时合计 {hours}"),
+                        f"以学时记载的 {counted} 门课学时合计 {hours}"
+                        + (f"（另有 {excluded} 门以周计，不计入）" if excluded else "")),
                 surfaces=["db"],
-                derivation=[f"db: course_catalog 按 major={major} 分组聚合门数、学分、学时"],
+                derivation=[
+                    f"db: course_catalog 按 major={major} 分组聚合门数与学分",
+                    f"db: total_hours 仅累加纯数字记法的 {counted} 行"
+                    f"（{excluded} 行为 '12w' 这类周记法，单位不同不可相加）",
+                ],
                 necessity={"db": "纯表聚合，不涉及政策条款或图关系"},
                 difficulty="easy",
                 template="major_aggregate",
-                extras={"major": major},
+                extras={"major": major, "hours_excluded_week_based": excluded},
             )
         out.append(guard("major_aggregate", make))
     return [t for t in out if t]
@@ -474,40 +496,55 @@ def t_major_aggregate(f: Facts) -> list[Task]:
 def t_course_sharing(f: Facts) -> list[Task]:
     """Cross-cutting course sharing — an aggregate no discipline view gives."""
     out: list[Task] = []
+    # Sharing breadth is capped well below the widest courses. The first draft
+    # used >=45 and asked how many of those majors sit in each discipline; for
+    # MAT0131 that is a 73-major graph traversal, and the run spent its whole
+    # budget paging neighbours and never answered. The question is only fair if
+    # the set is small enough to enumerate inside the step budget.
     rows = f.q("""select course_name, course_code, count(distinct major) c, course_type
                   from course_catalog
                   where substr(course_code,1,3) not in ('MAX','SFL','PHE','CHI')
-                  group by course_code having count(distinct major)>=45
+                  group by course_code
+                  having count(distinct major) between 8 and 20
                   order by c desc""")
     for name, code, cnt, ctype in rows:
         def make(name=name, code=code, cnt=cnt, ctype=ctype) -> Task:
-            rows2 = f.q("""select course_name, count(distinct major) c from course_catalog
-                           where course_code=? group by course_code""", (code,))
+            majors = [m for (m,) in f.q(
+                "select distinct major from course_catalog where course_code=?", (code,))]
             disc = collections.Counter()
-            for (m,) in f.q("select distinct major from course_catalog where course_code=?",
-                            (code,)):
-                d = f.disc_of.get(m)
+            for m in majors:
+                d = f.disc_label_of(m)
                 if d:
                     disc[d] += 1
-            top_d = disc.most_common(1)[0] if disc else ("", 0)
+            if not disc:
+                raise Unanswerable(f"{code} 的专业无学科大类归属")
+            ranked = disc.most_common()
+            if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+                raise Unanswerable(
+                    f"{code} 学科大类分布并列: {ranked[0][0]} / {ranked[1][0]} 同为 {ranked[0][1]}")
+            top_d = ranked[0]
             return Task(
                 question=(f"在全校培养方案中，课程「{name}」（{code}）被多少个专业要求？"
-                          f"属必修还是选修？这些专业中属{top_d[0]}学科大类的最多，有多少个？"
-                          f"{DISC_QUALIFIER}。"),
+                          f"属必修还是选修？这些专业分布在哪几个学科大类、"
+                          f"其中占比最多的是哪个大类、有多少个专业？{DISC_QUALIFIER}。"),
                 answer=(f"{name}（{code}）被 {cnt} 个专业要求，属{ctype}；"
-                        f"其中属{top_d[0]}学科大类的最多，有 {top_d[1]} 个专业"),
+                        f"这些专业分布在 {len(disc)} 个学科大类"
+                        f"（{'、'.join(f'{k} {v} 个' for k, v in ranked)}）；"
+                        f"其中{top_d[0]}最多，有 {top_d[1]} 个专业"),
                 surfaces=["db", "graph"],
                 derivation=[
-                    "db: course_catalog 按 course_code 聚合 count(distinct major)",
-                    f"graph: 把这些专业经 includes_major 反查学科大类，计数得 {top_d[0]}={top_d[1]}",
+                    f"db: course_catalog 按 course_code={code} 聚合 count(distinct major) = {cnt}",
+                    f"graph: 把这 {cnt} 个专业经 includes_major 反查学科大类并计数"
+                    f"（已验证占比最多者无并列）",
                 ],
                 necessity={
                     "db": "全校范围的课程共享度是表上的聚合量",
-                    "graph": "把专业集合按学科大类归组只能在图上做；表里没有 discipline 列",
+                    "graph": "把专业集合按学科大类归组只能在图上做；course_catalog 无 discipline 列",
                 },
                 difficulty="medium",
                 template="course_sharing",
-                extras={"course_code": code, "n_majors": cnt},
+                extras={"course_code": code, "n_majors": cnt,
+                        "uniqueness_check": f"占比最多的大类 {top_d[0]}={top_d[1]}，无并列"},
             )
         out.append(guard("course_sharing", make))
     return [t for t in out if t]
@@ -525,10 +562,15 @@ def t_kb_procedure(f: Facts) -> list[Task]:
          "1.毕业年级学生未修满公共选修课程学分者；2.二年级学生未取得公共选修课程学分者；"
          "3.三年级学生选修公共选修课程学分不满4学分者",
          "elective_stages"),
+        # The 退选 half originally asked "最多在什么时间范围内退选"; the KB only
+        # says "在规定的时间内", so a correct answer could not match a gold that
+        # implied a concrete window. Replaced with the consequence, which the KB
+        # does state exactly.
         ("general_elective_selection_rules.md", "不安排补考",
-         "公共选修课程考核不及格可以补考吗？学生最多在什么时间范围内退选？",
+         "公共选修课程考核不及格可以补考吗？如果学生在退选阶段结束前未办理退选，"
+         "会被如何认定？",
          "公共选修课程考核不安排补考，不及格者可在后续学期再次选修该课程或另选其他课程修读；"
-         "学生可在规定的退选阶段内网上退选，过期不退选视为已确认选修",
+         "过期不退选视为已确认选修相关课程",
          "elective_no_makeup"),
         ("course_selection_and_grading.md", "1/3",
          "按规定，每门课程参加补考的次数最多几次、补考合格后成绩按多少分记载？",
@@ -562,7 +604,8 @@ def t_kb_procedure(f: Facts) -> list[Task]:
             f.kb_anchor(doc, needle)
             return Task(question=q, answer=a, surfaces=["kb"], derivation=[f"kb: {doc}（锚点 {needle!r} 已验证）"],
                         necessity={"kb": "纯政策条款，不涉及任何专业或课程的具体数值"},
-                        difficulty="easy", template="kb_procedure", extras={"doc": doc, "tag": tag})
+                        difficulty="easy", template="kb_procedure",
+                        extras={"kb_doc": doc, "kb_anchor": needle, "tag": tag})
         out.append(guard("kb_procedure", make))
     return [t for t in out if t]
 
@@ -570,6 +613,169 @@ def t_kb_procedure(f: Facts) -> list[Task]:
 # --------------------------------------------------------------------------
 # H. single-surface controls (validate the ablation judging itself)
 # --------------------------------------------------------------------------
+@template
+def t_competition_policy_lookup(f: Facts) -> list[Task]:
+    """Query competition data from DB, then lookup policy rules in KB (db+kb)."""
+    out: list[Task] = []
+
+    # Task 1: Find A-tier competitions and cite their definition
+    def a_tier_definition() -> Task:
+        rows = f.q("""
+            SELECT competition_name, max_national_score
+            FROM competition_bonus
+            WHERE category = 'A'
+            ORDER BY competition_id
+        """)
+        if not rows:
+            raise Unanswerable("无A类竞赛")
+
+        names = [r[0] for r in rows]
+        names_str = '、'.join(names)
+
+        anchor = "A 类**：中国国际大学生创新大赛"
+        f.kb_anchor("postgraduate_recommendation_bonus.md", anchor)
+
+        return Task(
+            question=f"保研加分细则中，A类竞赛有哪几项？这一档位的定义是什么？",
+            answer=f"{names_str}；A类为综合性创新竞赛，国赛金奖或一等奖排名前4位可获最高加分",
+            surfaces=["db", "kb"],
+            derivation=[
+                "db: competition_bonus 筛选 category='A' 获取竞赛名单",
+                "kb: postgraduate_recommendation_bonus.md——'A类：中国国际大学生创新大赛、\"挑战杯\"...综合性竞赛'"
+            ],
+            necessity={
+                "db": "具体竞赛列表只在表中",
+                "kb": "A类的定义和最高加分规则是政策条款"
+            },
+            difficulty="easy",
+            template="competition_policy_lookup",
+            extras={"category": "A", "kb_doc": "postgraduate_recommendation_bonus.md",
+                   "kb_anchor": anchor}
+        )
+    out.append(guard("competition_policy_lookup", a_tier_definition))
+
+    # Task 2: Multi-track competitions and stacking rule
+    def multi_track_rule() -> Task:
+        rows = f.q("""
+            SELECT COUNT(*)
+            FROM competition_bonus
+            WHERE allows_multi_track = 1 AND category = 'B'
+        """)
+        count = rows[0][0]
+        if count == 0:
+            raise Unanswerable("B类无多赛道叠加竞赛")
+
+        anchor = "多赛道可叠加"
+        f.kb_anchor("postgraduate_recommendation_bonus.md", anchor)
+
+        return Task(
+            question=f"B类竞赛中有多少项标注为允许多赛道叠加？政策规定的叠加规则是什么？",
+            answer=f"{count} 项；标注'多赛道可叠加'的竞赛允许不同赛道获奖分数累加，未标注的取最高分",
+            surfaces=["db", "kb"],
+            derivation=[
+                "db: competition_bonus 筛选 category='B' 且 allows_multi_track=1，计数",
+                "kb: postgraduate_recommendation_bonus.md——'赛道叠加'规则"
+            ],
+            necessity={
+                "db": "允许叠加的竞赛数量需要统计表",
+                "kb": "叠加规则的语义解释是政策条款"
+            },
+            difficulty="easy",
+            template="competition_policy_lookup",
+            extras={"count": count, "kb_doc": "postgraduate_recommendation_bonus.md",
+                   "kb_anchor": anchor}
+        )
+    out.append(guard("competition_policy_lookup", multi_track_rule))
+
+    # Task 3: External team restriction
+    def external_team_restriction() -> Task:
+        total = f.q("SELECT COUNT(*) FROM competition_bonus")[0][0]
+
+        anchor = "参与其他学校团队获得的奖励不加分"
+        f.kb_anchor("postgraduate_recommendation_bonus.md", anchor)
+
+        return Task(
+            question=f"保研加分表中共有 {total} 项竞赛。如果学生参与其他学校团队获得的奖励，能否加分？",
+            answer=f"不能加分；参与其他学校团队获得的奖励不加分",
+            surfaces=["db", "kb"],
+            derivation=[
+                "db: competition_bonus 统计总数",
+                "kb: postgraduate_recommendation_bonus.md——'外校团队限制'条款"
+            ],
+            necessity={
+                "db": "竞赛总数来自表",
+                "kb": "外校团队限制是政策规则，表里无该字段"
+            },
+            difficulty="easy",
+            template="competition_policy_lookup",
+            extras={"total": total, "kb_doc": "postgraduate_recommendation_bonus.md",
+                   "kb_anchor": anchor}
+        )
+    out.append(guard("competition_policy_lookup", external_team_restriction))
+
+    return [t for t in out if t]
+
+
+@template
+def t_competition_aggregation(f: Facts) -> list[Task]:
+    """Aggregate queries over competition_bonus table (pure DB)."""
+    out: list[Task] = []
+
+    # Task 1: Count multi-track competitions by category
+    for cat in ['B', 'C']:
+        def make(cat=cat) -> Task:
+            rows = f.q(f"""
+                SELECT COUNT(*) as total,
+                       SUM(allows_multi_track) as multi_count,
+                       ROUND(AVG(CASE WHEN allows_multi_track=1 AND max_national_score IS NOT NULL
+                                 THEN max_national_score END), 2) as avg_score
+                FROM competition_bonus
+                WHERE category = '{cat}'
+            """)
+            total, multi_count, avg_score = rows[0]
+            multi_count = int(multi_count) if multi_count else 0
+
+            if multi_count == 0:
+                raise Unanswerable(f"{cat}类无多赛道叠加竞赛")
+
+            return Task(
+                question=f"{cat}类竞赛中，有多少项允许多赛道叠加？这些竞赛的国赛最高加分平均值是多少分？",
+                answer=f"{multi_count} 项；平均 {avg_score} 分",
+                surfaces=["db"],
+                derivation=[f"db: competition_bonus 筛选 category='{cat}' 且 allows_multi_track=1，聚合计数和平均分"],
+                necessity={"db": "允许叠加标记和加分数值都只在 competition_bonus 表"},
+                difficulty="easy",
+                template="competition_aggregation",
+                extras={"category": cat, "multi_count": multi_count, "avg_score": avg_score}
+            )
+        out.append(guard("competition_aggregation", make))
+
+    # Task 2: High-score competitions with provincial track
+    def high_score_prov() -> Task:
+        rows = f.q("""
+            SELECT COUNT(*)
+            FROM competition_bonus
+            WHERE max_national_score >= 4 AND has_provincial = 1
+        """)
+        count = rows[0][0]
+        if count == 0:
+            raise Unanswerable("无国赛>=4分且有省赛的竞赛")
+
+        return Task(
+            question="国赛最高加分不低于 4 分、且设有省赛的竞赛有多少项？",
+            answer=f"{count} 项",
+            surfaces=["db"],
+            derivation=["db: competition_bonus 筛选 max_national_score>=4 且 has_provincial=1，计数"],
+            necessity={"db": "加分数值和省赛标记只在表中"},
+            difficulty="easy",
+            template="competition_aggregation",
+            extras={"count": count, "threshold": 4}
+        )
+    out.append(guard("competition_aggregation", high_score_prov))
+
+    return [t for t in out if t]
+
+
 @template
 def t_controls(f: Facts) -> list[Task]:
     out: list[Task] = []
@@ -581,7 +787,9 @@ def t_controls(f: Facts) -> list[Task]:
             answer="本细则从 2021 级本科生开始执行，由本科生院负责解释",
             surfaces=["kb"], derivation=["kb: supplementary_provisions.md 第九十三、九十四条"],
             necessity={"kb": "纯政策条款"}, difficulty="easy", template="control_kb",
-            extras={"note": "单面任务，作为消融对照组：验证 kb-only 任务确实只需 KB"})
+            extras={"kb_doc": "supplementary_provisions.md",
+                    "kb_anchor": "本细则由本科生院负责解释",
+                    "note": "单面任务，作为消融对照组：验证 kb-only 任务确实只需 KB"})
     out.append(guard("control_kb", kb_control))
 
     def db_control() -> Task:
@@ -614,6 +822,23 @@ def main() -> int:
         produced = fn(f)
         tasks.extend(produced)
         print(f"  {fn.__name__:34s} {len(produced):4d}")
+
+    # Every kb-claiming task must name the clause it leans on, and that clause
+    # must still be in the KB. The anchor check already runs inside each
+    # template, but three templates (transfer_plan, college_intersection,
+    # discipline_major_membership — 61 of 108 kb tasks) once wrote a policy
+    # sentence straight into the gold without one. They happened to be correct;
+    # nothing made them stay correct across a KB re-extraction. Re-asserting
+    # here off the emitted metadata means a template added later cannot claim
+    # kb without leaving a re-checkable trace.
+    for t in tasks:
+        if "kb" not in t.surfaces:
+            continue
+        doc, anchor = t.extras.get("kb_doc"), t.extras.get("kb_anchor")
+        if not doc or not anchor:
+            raise AssertionError(
+                f"{t.template}: 声明了 kb 面却没有 kb_doc/kb_anchor，无法事后复核")
+        f.kb_anchor(doc, anchor)
 
     # Round-robin across templates so the cap does not starve whole families.
     by_t: dict[str, list[Task]] = collections.defaultdict(list)
